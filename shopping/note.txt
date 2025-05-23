@@ -1,0 +1,9 @@
+product order and customer not required
+add cart.js model
+
+delete product and customer repository
+delete customer and product service
+make change in utils->index.js
+delete customer and product api
+
+change error handler in utils-> error-handler.js

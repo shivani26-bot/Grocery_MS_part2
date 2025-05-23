@@ -1,0 +1,11 @@
+customer microservice will not have models->order and product, it will contain only customer related models
+delete product and shopping repository
+
+start from models-> repository->service->api
+delete product and shopping services
+delete product and shopping api
+
+A subscribe event is a function that handles communication with other services. When another service calls our customer service, this function will perform specific operations. These operations could involve making HTTP calls, triggering webhooks, 
+or subscribing to a message broker, among other methods.
+
+add app-events.js

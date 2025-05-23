@@ -1,0 +1,161 @@
+We've introduced a service that acts as a proxy, allowing us to reach our services and get the job done. work with our existing source code and integrate Nginx as a reverse proxy. This will help us route traffic to our services, which will communicate directly with the message broker. The subscriber pattern will come into play later. 
+
+Dockerize the projects, set up the reverse proxy, and deploy everything to AWS. Configure continuous deployment so that whenever changes are made or data is merged into the master branch, the application will automatically be deployed to AWS. AWS will manage exposing the endpoints, allowing our clients to reach our services. 
+
+delete the gateway and use proxy instead
+
+
+
+These two functions are responsible for communication with other services. They make HTTP calls to specific webhooks and push data from here to those services.
+module.exports.PublishCustomerEvent = async (payload) => {
+  axios.post("http://localhost:8000/customer/app-events", {
+    payload,
+  });
+
+  //     axios.post(`${BASE_URL}/customer/app-events/`,{
+  //         payload
+  //     });
+};
+
+module.exports.PublishShoppingEvent = async (payload) => {
+  axios.post(`http://localhost:8000/shopping/app-events/`, {
+    payload,
+  });
+};
+
+
+This is the webhook we expose to other services, allowing them to call it and send data to us. Once we receive the data, we process the response using our subscriber method inside the service class. The communication flow will remain the same, but instead of using this webhook, we will implement the message broker.
+module.exports = (app) => {
+  const service = new CustomerService();
+
+  //expose webhook to  other service
+  app.use("/app-events", async (req, res, next) => {
+    const { payload } = req.body;
+
+    //handle subscribe events
+    service.SubscribeEvents(payload);
+
+    console.log("============= Shopping ================");
+    console.log(payload);
+    res.json(payload);
+  });
+};
+
+
+RabbitMQ message broker is used here
+to integrate rabbitmq install the library
+https://www.npmjs.com/package/amqplib, for message broker
+
+
+for message broker
+first create a channel
+publish messages
+subscribe messages
+
+
+// First, we establish a connection by providing the RabbitMQ host URL. Once the host URL is provided, we connect to the service. After the connection is successfully established, we create a channel. Once the channel is created, we initiate an exchange. The exchange acts as a distributor, routing messages between queues based on specific configurations.
+
+module.exports.CreateChannel = async () => {
+  try {
+    const connection = await amqplib.connect(MSG_BROKER_URL);
+    const channel = await connection.createChannel();
+    await channel.assertExchange(EXCHANGE_NAME, "direct", false);
+    return channel;
+  } catch (err) {
+    throw err;
+  }
+};
+
+// In order to publish a message, we need a channel that has already been created. After that, we publish the message to this channel using the exchange name and the binding key. The binding key determines which specific queue or consumer will receive the message.
+module.exports.PublishMessage = (channel, binding_key, msg) => {
+ try {
+  await channel.publish(EXCHANGE_NAME, binding_key, Buffer.from(msg));
+ }
+catch (err) {
+    throw err;
+  }
+};
+
+
+//In order to subscribe to messages, we need a channel that has already been created. Then, we need to define the binding key and the queue name. As shown in the diagram, each queue has a different name, such as the customer queue and the shopping queue. The shopping queue is responsible for handling all messages related to shopping, and any message placed into this queue will be relayed to the consumer. Similarly, the customer queue is responsible for delivering messages to the customer.
+
+There are two binding keys: binding key one and binding key two, which we pass when binding the queue. The queue name depends on the service, and we define it accordingly. In this process, we bind the queue name to the exchange name using the binding key. This setup allows us to receive data that is published by the publisher. If the binding key matches the queue bound to the consumer, the data will be successfully delivered.
+module.exports.SubscribeMessage = (channel, service,binding_key) => {
+const appQueue=await channel.assertQueue(QUEUE_NAME);
+channel.bindQueue(appQueue.queue,EXCHANGE_NAME,binding_key);
+channel.consume(appQueue.queue,data=>{
+  console.log("received data");
+  console.log(data.content.toString());
+  channel.ack(data);
+})
+};
+
+
+we need to install rabbit mq management console in computer, 17:38
+we can also use cloudamqp.com for rabbitmq, this is the hosted on the cloud, 
+41:49
+
+
+here we are not using gateway or proxy hence url will be 
+
+{{CUSTOMER_BASE}} -> http://localhost:8001
+{{SHOPPING_BASE}} -> http://localhost:8003
+{{PRODUCTS_BASE}} -> http://localhost:8002
+
+and no prefix like customer/ , product/ , shopping/ will be used
+
+
+
+We have integrated the message broker, and it seems to be working perfectly now. Even if our service is down temporarily,
+it is still able to revive the previously fired events.
+However, one thing is missing — the NGINX reverse proxy.
+The NGINX reverse proxy will help us discover our services with certain endpoints. Currently, our services are exposed
+publicly using specific port
+NGINX will handle this by listening to the default port number on the host. But before we do that, we need to Dockerize our project. 
+Only then can we expose the whole system using the NGINX reverse proxy.
+
+
+Make Dockerfile in each service, write some commands There
+make a folder proxy, which act as ngnix proxy
+
+
+nginx.conf: 
+The worker processes define how many processes NGINX will handle. If we set it to just one process, it can handle a limited number of connections, such as 256 connections. However, if we define more worker processes, each process will handle more connections. For instance, by setting the worker_connections to 1024, each process can handle 1024 connections. If we have four worker processes, it means the total number of connections NGINX can handle is 1024 multiplied by 4, which equals 4096 connections.
+Next, inside the http and server blocks, we set the server to listen on port 80. We also configure the character set to UTF-8. When the request reaches the root location, it is forwarded to the appropriate service.
+
+worker_processes 4;  //This tells NGINX to create 4 separate worker processes.
+//Each worker process handles incoming requests from users. More worker processes allow NGINX to handle more requests at the same time.
+
+events {
+    worker_connections 1024;
+}
+//This sets how many connections each worker process can handle at the same time.
+In this case, each worker process can handle 1024 connections.
+4 worker processes, each handling 1024 connections means that NGINX can handle a total of 4096 connections at once (4 * 1024).
+
+add docker-compose.yaml
+
+
+If you're using a cloud-hosted MongoDB service, such as MongoDB Atlas or another cloud provider, you don’t need to run MongoDB locally. You simply need to replace the connection string in your application with the cloud instance’s connection string.
+f you're using a cloud service like CloudAMQP, you don’t need to run RabbitMQ locally in a Docker container. You just need to update your application to use the cloud RabbitMQ connection URL.
+
+  nosql-db:
+    image: mvertes/alpine-mongo
+    ports:
+      - "27018:27017"
+    container_name: nosql-db
+    volumes:
+      - ./db/:/data/db
+
+  rabbitmq:
+    image: rabbitmq:alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+
+  I can remove these parts from docker-compose.yaml as we are using the cloud hosted rabbitmq and mongodb Atlas
+
+  docker-compose build && docker-compose up
+
+  .................................................
+  we will also refactor the code
